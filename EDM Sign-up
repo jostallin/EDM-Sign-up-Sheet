@@ -1,0 +1,442 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc, 
+  onSnapshot, 
+  deleteDoc,
+  serverTimestamp 
+} from 'firebase/firestore';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  Plus, 
+  Clock, 
+  User, 
+  Briefcase, 
+  Trash2, 
+  Calendar as CalendarIcon,
+  X,
+  AlertTriangle,
+  Layers,
+  CalendarDays
+} from 'lucide-react';
+
+// --- Firebase Configuration ---
+const firebaseConfig = JSON.parse(__firebase_config);
+  apiKey: "AIzaSyDIVQntX5zWfBM8aHTmB2orGquY-GHF5fk",
+  authDomain: "machine-sign-up.firebaseapp.com",
+  projectId: "machine-sign-up",
+  storageBucket: "machine-sign-up.firebasestorage.app",
+  messagingSenderId: "1003146473182",
+  appId: "1:1003146473182:web:985e45380e0e4d49d9dc4f",
+  measurementId: "G-6JL0Z9LEX9"
+
+const MACHINES = [
+  { id: 'wire-edm', name: 'Wire EDM', category: 'EDM' },
+  { id: 'ram-edm', name: 'RAM EDM', category: 'EDM' },
+  { id: 'vf1-1', name: 'VF1 CNC #1', category: 'Mill' },
+  { id: 'vf1-2', name: 'VF1 CNC #2', category: 'Mill' },
+  { id: 'vf2', name: 'VF2 CNC', category: 'Mill' },
+  { id: 'sl10-1', name: 'SL10 Lathe #1', category: 'Lathe' },
+  { id: 'sl10-2', name: 'SL10 Lathe #2', category: 'Lathe' },
+  { id: 'sl10-3', name: 'SL10 Lathe #3', category: 'Lathe' },
+  { id: 'ec300', name: 'Horizontal EC300', category: 'Mill' },
+  { id: 'edm-drill', name: 'EDM Drill', category: 'EDM' },
+];
+
+const START_HOUR = 8;
+const END_HOUR = 18;
+const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => i + START_HOUR);
+
+const USER_COLORS = [
+  { bg: 'bg-indigo-50', border: 'border-indigo-200', text: 'text-indigo-800', accent: 'text-indigo-500', hover: 'hover:ring-indigo-400' },
+  { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-800', accent: 'text-emerald-500', hover: 'hover:ring-emerald-400' },
+  { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800', accent: 'text-amber-500', hover: 'hover:ring-amber-400' },
+  { bg: 'bg-rose-50', border: 'border-rose-200', text: 'text-rose-800', accent: 'text-rose-500', hover: 'hover:ring-rose-400' },
+  { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-800', accent: 'text-cyan-500', hover: 'hover:ring-cyan-400' },
+  { bg: 'bg-violet-50', border: 'border-violet-200', text: 'text-violet-800', accent: 'text-violet-500', hover: 'hover:ring-violet-400' },
+  { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-800', accent: 'text-orange-500', hover: 'hover:ring-orange-400' },
+  { bg: 'bg-lime-50', border: 'border-lime-200', text: 'text-lime-800', accent: 'text-lime-500', hover: 'hover:ring-lime-400' },
+];
+
+const getColorForUser = (name) => {
+  if (!name) return USER_COLORS[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % USER_COLORS.length;
+  return USER_COLORS[index];
+};
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [viewDate, setViewDate] = useState(new Date());
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedMachine, setSelectedMachine] = useState(MACHINES[0]);
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  
+  const timelineRef = useRef(null);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const scrollLeft = useRef(0);
+
+  const [formData, setFormData] = useState({
+    userName: '',
+    projectName: '',
+    startDate: new Date().toISOString().split('T')[0],
+    startTime: '08:00',
+    durationHours: '1',
+    durationMinutes: '0'
+  });
+
+  const formatLocalDate = (date) => {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) { console.error("Auth error:", err); }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const bookingsRef = collection(db, 'artifacts', appId, 'public', 'data', 'bookings');
+    return onSnapshot(bookingsRef, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setBookings(data);
+      setLoading(false);
+    }, (err) => {
+      console.error("Firestore error:", err);
+      setLoading(false);
+    });
+  }, [user]);
+
+  const handleBooking = async (e) => {
+    e.preventDefault();
+    if (!user || submitting) return;
+    
+    setSubmitting(true);
+    setError(null);
+
+    const start = new Date(`${formData.startDate}T${formData.startTime}`);
+    const durationMs = (parseInt(formData.durationHours) * 3600000) + (parseInt(formData.durationMinutes) * 60000);
+    const end = new Date(start.getTime() + durationMs);
+
+    const collision = bookings.find(b => {
+      if (b.machineId !== selectedMachine.id) return false;
+      return (start.getTime() < b.endTime && end.getTime() > b.startTime);
+    });
+
+    if (collision) {
+      const freeAt = new Date(collision.endTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      setError(`Collision: ${collision.userName} is on ${selectedMachine.name} until ${freeAt}.`);
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'bookings'), {
+        machineId: selectedMachine.id,
+        machineName: selectedMachine.name,
+        userName: formData.userName,
+        projectName: formData.projectName,
+        startTime: start.getTime(),
+        endTime: end.getTime(),
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
+      setIsModalOpen(false);
+    } catch (err) { 
+      console.error("Error adding document:", err); 
+      setError("Failed to save booking. Please try again.");
+    } finally {
+      // Throttle submission for 2 seconds to prevent accidental double-clicks or spam
+      setTimeout(() => setSubmitting(false), 2000);
+    }
+  };
+
+  const deleteBooking = async (id) => {
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'bookings', id)); } catch (err) { console.error(err); }
+  };
+
+  const changeDay = (offset) => {
+    const next = new Date(viewDate);
+    next.setDate(next.getDate() + offset);
+    setViewDate(next);
+  };
+
+  const dayBookings = useMemo(() => {
+    const d = new Date(viewDate);
+    const startOfWindow = new Date(d.getFullYear(), d.getMonth(), d.getDate(), START_HOUR, 0, 0).getTime();
+    const endOfWindow = new Date(d.getFullYear(), d.getMonth(), d.getDate(), END_HOUR, 0, 0).getTime();
+    return bookings.filter(b => b.startTime < endOfWindow && b.endTime > startOfWindow);
+  }, [bookings, viewDate]);
+
+  const handleMouseDown = (e) => {
+    isDragging.current = true;
+    timelineRef.current.classList.add('cursor-grabbing');
+    startX.current = e.pageX - timelineRef.current.offsetLeft;
+    scrollLeft.current = timelineRef.current.scrollLeft;
+  };
+
+  const handleMouseLeave = () => {
+    isDragging.current = false;
+    timelineRef.current.classList.remove('cursor-grabbing');
+  };
+
+  const handleMouseUp = () => {
+    isDragging.current = false;
+    timelineRef.current.classList.remove('cursor-grabbing');
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging.current) return;
+    e.preventDefault();
+    const x = e.pageX - timelineRef.current.offsetLeft;
+    const walk = (x - startX.current) * 1.5;
+    timelineRef.current.scrollLeft = scrollLeft.current - walk;
+  };
+
+  if (loading) return (
+    <div className="h-screen flex items-center justify-center bg-slate-50">
+      <div className="animate-spin rounded-full h-8 w-8 border-2 border-indigo-600 border-t-transparent" />
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans select-none">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-40 shadow-sm">
+        <div className="flex items-center space-x-4">
+          <div className="bg-indigo-600 p-2.5 rounded-xl shadow-lg shadow-indigo-100">
+            <Layers className="text-white w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">Shop Scheduler</h1>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-[0.2em]">8:00 AM - 6:00 PM</p>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center bg-slate-100 p-1.5 rounded-xl border border-slate-200">
+            <button onClick={() => changeDay(-1)} className="p-2 hover:bg-white hover:shadow-sm rounded-lg transition-all active:scale-90 text-slate-500">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            
+            <div className="flex items-center px-3 space-x-2">
+              <input 
+                type="date" 
+                value={formatLocalDate(viewDate)}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const [y, m, d] = e.target.value.split('-').map(Number);
+                  setViewDate(new Date(y, m - 1, d));
+                }}
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm font-bold text-slate-700 focus:ring-2 focus:ring-indigo-500/20 outline-none cursor-pointer"
+              />
+            </div>
+
+            <button onClick={() => changeDay(1)} className="p-2 hover:bg-white hover:shadow-sm rounded-lg transition-all active:scale-90 text-slate-500">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <button 
+            onClick={() => {
+              setError(null);
+              setIsModalOpen(true);
+            }}
+            className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 flex items-center space-x-2 transition-all active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Schedule Job</span>
+          </button>
+        </div>
+      </header>
+
+      <div 
+        ref={timelineRef}
+        onMouseDown={handleMouseDown}
+        onMouseLeave={handleMouseLeave}
+        onMouseUp={handleMouseUp}
+        onMouseMove={handleMouseMove}
+        className="flex-1 overflow-auto p-6 bg-slate-50 cursor-grab active:cursor-grabbing"
+      >
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 inline-block min-w-full overflow-hidden">
+          <div className="flex border-b border-slate-100 bg-slate-50/50 sticky top-0 z-20">
+            <div className="w-56 flex-shrink-0 p-4 border-r border-slate-200 font-bold text-[10px] uppercase tracking-widest text-slate-400 bg-slate-50/80 backdrop-blur-md">
+              Machine Asset
+            </div>
+            <div className="flex flex-1">
+              {HOURS.map(hour => (
+                <div key={hour} className="w-32 flex-shrink-0 text-center py-4 border-r border-slate-100/50 text-[10px] font-bold text-slate-400">
+                  {hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {MACHINES.map(machine => {
+            const machineBookings = dayBookings.filter(b => b.machineId === machine.id);
+            return (
+              <div key={machine.id} className="flex border-b border-slate-100 hover:bg-slate-50/30 transition-colors">
+                <div className="w-56 flex-shrink-0 p-4 border-r border-slate-200 bg-white/80 sticky left-0 z-10 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                  <h4 className="font-bold text-sm text-slate-800">{machine.name}</h4>
+                  <div className="flex items-center mt-1">
+                    <span className="text-[9px] text-indigo-500 font-extrabold uppercase tracking-tighter bg-indigo-50 px-1.5 py-0.5 rounded">
+                      {machine.category}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="flex flex-1 relative h-20">
+                  {HOURS.map(hour => (
+                    <div key={hour} className="w-32 h-full border-r border-slate-100/30 flex-shrink-0" />
+                  ))}
+
+                  {machineBookings.map(booking => {
+                    const pixelsPerHour = 128; 
+                    const d = new Date(viewDate);
+                    const startOfViewDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), START_HOUR, 0, 0).getTime();
+                    const endOfViewDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), END_HOUR, 0, 0).getTime();
+                    
+                    const blockStart = Math.max(startOfViewDay, booking.startTime);
+                    const blockEnd = Math.min(endOfViewDay, booking.endTime);
+                    const leftPos = ((blockStart - startOfViewDay) / (1000 * 60 * 60)) * pixelsPerHour;
+                    const durationHrs = (blockEnd - blockStart) / (1000 * 60 * 60);
+                    const width = durationHrs * pixelsPerHour;
+
+                    if (width <= 0) return null;
+
+                    const color = getColorForUser(booking.userName);
+
+                    return (
+                      <div 
+                        key={booking.id}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        style={{ left: `${leftPos}px`, width: `${width}px` }}
+                        className={`absolute top-3 bottom-3 ${color.bg} border ${color.border} rounded-lg p-2.5 overflow-hidden shadow-sm hover:shadow-md hover:ring-2 ${color.hover} transition-all cursor-pointer group/block z-10 hover:z-20 min-w-[20px]`}
+                      >
+                        <div className="flex flex-col h-full justify-between pointer-events-none">
+                          <div className="min-w-0">
+                            <div className="flex items-center justify-between mb-0.5 pointer-events-auto">
+                              <p className={`text-[10px] font-black ${color.text} truncate uppercase leading-none`}>{booking.userName}</p>
+                              <button onClick={(e) => { e.stopPropagation(); deleteBooking(booking.id); }} className="opacity-0 group-hover/block:opacity-100 p-0.5 hover:bg-black/5 rounded text-red-500 transition-opacity"><X className="w-3 h-3" /></button>
+                            </div>
+                            <p className={`text-[9px] ${color.accent} truncate font-bold uppercase tracking-tight`}>{booking.projectName}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)}></div>
+          <div className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-300 max-h-[95vh] flex flex-col">
+            <div className="p-8 border-b bg-slate-50 flex justify-between items-center flex-shrink-0">
+              <div>
+                <h2 className="text-2xl font-black text-slate-800">Schedule Machine</h2>
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mt-1">Resource Allocation</p>
+              </div>
+              <button onClick={() => setIsModalOpen(false)} className="p-2.5 text-slate-400 hover:bg-white rounded-full active:scale-90"><X className="w-6 h-6" /></button>
+            </div>
+            
+            <div className="overflow-y-auto flex-1 p-8">
+              <form onSubmit={handleBooking} className="space-y-6">
+                {error && (
+                  <div className="flex items-center space-x-3 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-sm font-bold animate-in fade-in zoom-in duration-200">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="col-span-2">
+                    <label className="text-[10px] uppercase font-black text-slate-400 mb-2 block tracking-widest">Machine</label>
+                    <select value={selectedMachine.id} onChange={(e) => setSelectedMachine(MACHINES.find(m => m.id === e.target.value))} className="w-full px-5 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 font-bold text-sm outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-sm">
+                      {MACHINES.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="col-span-1">
+                    <label className="text-[10px] uppercase font-black text-slate-400 mb-2 block tracking-widest">Operator Name</label>
+                    <input required type="text" placeholder="Student Name" value={formData.userName} onChange={e => setFormData({...formData, userName: e.target.value})} className="w-full px-4 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 font-bold text-sm outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-sm" />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="text-[10px] uppercase font-black text-slate-400 mb-2 block tracking-widest">Project / Job #</label>
+                    <input required type="text" placeholder="Project Name" value={formData.projectName} onChange={e => setFormData({...formData, projectName: e.target.value})} className="w-full px-4 py-3.5 rounded-2xl border border-slate-200 bg-slate-50 font-bold text-sm outline-none focus:ring-4 focus:ring-indigo-500/10 shadow-sm" />
+                  </div>
+
+                  <div className="col-span-2 bg-slate-50 p-5 rounded-3xl border border-slate-100 shadow-inner space-y-4">
+                    <div className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                      <Clock className="w-4 h-4" /> Start Time
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <input type="date" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} className="px-4 py-3 rounded-xl border border-slate-200 font-bold text-sm shadow-sm" />
+                      <input type="time" value={formData.startTime} onChange={e => setFormData({...formData, startTime: e.target.value})} className="px-4 py-3 rounded-xl border border-slate-200 font-bold text-sm shadow-sm" />
+                    </div>
+                  </div>
+
+                  <div className="col-span-2 bg-slate-50 p-5 rounded-3xl border border-slate-100 shadow-inner space-y-4">
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                      <CalendarDays className="w-4 h-4" /> Duration
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[9px] uppercase font-bold text-slate-400 mb-1 block">Hours</label>
+                        <input type="number" min="0" value={formData.durationHours} onChange={e => setFormData({...formData, durationHours: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 font-bold text-sm shadow-sm" />
+                      </div>
+                      <div>
+                        <label className="text-[9px] uppercase font-bold text-slate-400 mb-1 block">Minutes</label>
+                        <input type="number" min="0" max="59" value={formData.durationMinutes} onChange={e => setFormData({...formData, durationMinutes: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-slate-200 font-bold text-sm shadow-sm" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <button 
+                  type="submit" 
+                  disabled={submitting}
+                  className={`w-full py-5 rounded-[1.5rem] text-sm font-black uppercase tracking-[0.2em] text-white shadow-2xl transition-all mt-4 ${submitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-300 active:scale-[0.98]'}`}
+                >
+                  {submitting ? 'Scheduling...' : 'Confirm Schedule'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
