@@ -28,34 +28,11 @@
                 chevronRight: <path d="m9 18 6-6-6-6"/>,
                 plus: <path d="M5 12h14m-7-7v14"/>,
                 x: <path d="M18 6 6 18M6 6l12 12"/>,
-                calendar: (
-                    <React.Fragment>
-                        <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
-                        <line x1="16" x2="16" y1="2" y2="6"/>
-                        <line x1="8" x2="8" y1="2" y2="6"/>
-                        <line x1="3" x2="21" y1="10" y2="10"/>
-                    </React.Fragment>
-                ),
-                layers: (
-                    <React.Fragment>
-                        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
-                        <polyline points="2 17 12 22 22 17"/>
-                        <polyline points="2 12 12 17 22 12"/>
-                    </React.Fragment>
-                ),
-                user: (
-                    <React.Fragment>
-                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
-                        <circle cx="12" cy="7" r="4"/>
-                    </React.Fragment>
-                ),
-                alert: (
-                    <React.Fragment>
-                        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
-                        <line x1="12" x2="12" y1="9" y2="13"/>
-                        <line x1="12" x2="12.01" y1="17" y2="17"/>
-                    </React.Fragment>
-                )
+                calendar: <React.Fragment><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></React.Fragment>,
+                layers: <React.Fragment><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></React.Fragment>,
+                user: <React.Fragment><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></React.Fragment>,
+                alert: <React.Fragment><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></React.Fragment>,
+                info: <React.Fragment><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></React.Fragment>
             };
             return (
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -70,8 +47,7 @@
             projectId: "machine-sign-up",
             storageBucket: "machine-sign-up.firebasestorage.app",
             messagingSenderId: "1003146473182",
-            appId: "1:1003146473182:web:985e45380e0e4d49d9dc4f",
-            measurementId: "G-6JL0Z9LEX9"
+            appId: "1:1003146473182:web:985e45380e0e4d49d9dc4f"
         };
 
         const appId = 'machine-scheduler-v3';
@@ -98,6 +74,7 @@
             const [bookings, setBookings] = useState([]);
             const [loading, setLoading] = useState(true);
             const [viewDate, setViewDate] = useState(new Date());
+            const [calendarDate, setCalendarDate] = useState(new Date());
             const [isModalOpen, setIsModalOpen] = useState(false);
             const [isLoginOpen, setIsLoginOpen] = useState(false);
             const [isMonthViewOpen, setIsMonthViewOpen] = useState(false);
@@ -134,6 +111,27 @@
                 }, () => setLoading(false));
             }, [user]);
 
+            // Safety Warning Logic
+            const safetyWarning = useMemo(() => {
+                const date = new Date(formData.startDate + 'T' + formData.startTime);
+                const hour = date.getHours();
+                const day = date.getDay(); // 0 Sun, 6 Sat
+
+                // Hard Safety Warning (Before 8am or After 4pm)
+                if (hour < 8 || hour >= 16) {
+                    return { type: 'hard', msg: 'NO INSTRUCTORS PRESENT. Approval Required for safety reasons.' };
+                }
+                // Weekend Warning
+                if (day === 0 || day === 6) {
+                    return { type: 'weekend', msg: 'Weekend usage is rare. Please confirm with instructor.' };
+                }
+                // Soft Warning (M-Th before noon)
+                if (day >= 1 && day <= 4 && hour < 12) {
+                    return { type: 'soft', msg: 'Soft Warning: Instructor may be unavailable for help until Noon.' };
+                }
+                return null;
+            }, [formData.startDate, formData.startTime]);
+
             useEffect(() => {
                 if (!isModalOpen) { setConflict(null); return; }
                 const start = new Date(`${formData.startDate}T${formData.startTime}`).getTime();
@@ -149,14 +147,6 @@
                 } catch (err) { alert("Permission denied."); }
             };
 
-            const changeDay = (off) => { 
-                const n = new Date(viewDate); 
-                n.setDate(n.getDate() + off); 
-                setViewDate(n); 
-            };
-
-            const goToToday = () => setViewDate(new Date());
-
             const bookedDates = useMemo(() => {
                 const dates = new Set();
                 bookings.forEach(b => {
@@ -166,16 +156,48 @@
                 return dates;
             }, [bookings]);
 
+            const changeDay = (off) => { 
+                let n = new Date(viewDate);
+                n.setDate(n.getDate() + off);
+
+                // Soft Hide Weekends Logic
+                // If it's a weekend and there are no bookings, skip it
+                const isWeekend = (d) => d.getDay() === 0 || d.getDay() === 6;
+                const hasBooking = (d) => bookedDates.has(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+
+                // Skip ahead/back until we find a weekday or a booked weekend
+                let safetyCounter = 0;
+                while (isWeekend(n) && !hasBooking(n) && safetyCounter < 7) {
+                    n.setDate(n.getDate() + (off > 0 ? 1 : -1));
+                    safetyCounter++;
+                }
+                
+                setViewDate(n); 
+                setCalendarDate(new Date(n));
+            };
+
+            const goToToday = () => {
+                const now = new Date();
+                setViewDate(now);
+                setCalendarDate(new Date(now));
+            };
+
             const monthDays = useMemo(() => {
-                const year = viewDate.getFullYear();
-                const month = viewDate.getMonth();
+                const year = calendarDate.getFullYear();
+                const month = calendarDate.getMonth();
                 const firstDay = new Date(year, month, 1).getDay();
                 const daysInMonth = new Date(year, month + 1, 0).getDate();
                 const days = [];
                 for (let i = 0; i < firstDay; i++) days.push(null);
                 for (let i = 1; i <= daysInMonth; i++) days.push(new Date(year, month, i));
                 return days;
-            }, [viewDate]);
+            }, [calendarDate]);
+
+            const changeCalendarMonth = (off) => {
+                const n = new Date(calendarDate);
+                n.setMonth(n.getMonth() + off);
+                setCalendarDate(n);
+            };
 
             if (loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 italic">Loading Shop...</div>;
 
@@ -186,20 +208,24 @@
                             <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm"><Icon name="layers" className="text-white w-4 h-4"/></div>
                             <div className="hidden sm:block">
                                 <h1 className="text-sm font-bold text-slate-800">Shop Scheduler</h1>
-                                {isAdmin && <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Admin Mode</span>}
+                                {isAdmin && <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Admin</span>}
                             </div>
                         </div>
                         
                         <div className="flex items-center space-x-1 sm:space-x-2">
-                            <button onClick={() => setIsMonthViewOpen(!isMonthViewOpen)} title="Calendar View" className={`p-2 border rounded-lg active:bg-slate-100 ${isMonthViewOpen ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white'}`}>
+                            <button onClick={() => setIsMonthViewOpen(!isMonthViewOpen)} className={`p-2 border rounded-lg active:bg-slate-100 ${isMonthViewOpen ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white'}`}>
                                 <Icon name="calendar" className="w-4 h-4"/>
                             </button>
                             
-                            <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200 shadow-inner">
-                                <button onClick={() => changeDay(-1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-md transition-all active:scale-90"><Icon name="chevronLeft" className="w-3.5 h-3.5"/></button>
-                                <button onClick={goToToday} className="px-2 text-[10px] font-black uppercase tracking-tighter hover:text-indigo-600 transition-colors">Today</button>
-                                <button onClick={() => changeDay(1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-md transition-all active:scale-90"><Icon name="chevronRight" className="w-3.5 h-3.5"/></button>
+                            <div className="flex items-center bg-slate-50 border rounded-lg overflow-hidden shadow-sm">
+                                <button onClick={() => changeDay(-1)} className="p-2 hover:bg-white transition-colors border-r"><Icon name="chevronLeft" className="w-4 h-4 text-slate-400"/></button>
+                                <div className="px-3 text-xs font-bold text-slate-700 min-w-[90px] text-center">
+                                    {viewDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                                </div>
+                                <button onClick={() => changeDay(1)} className="p-2 hover:bg-white transition-colors border-l"><Icon name="chevronRight" className="w-4 h-4 text-slate-400"/></button>
                             </div>
+
+                            <button onClick={goToToday} className="px-3 py-2 bg-slate-100 rounded-lg text-[10px] font-black uppercase tracking-tight hover:bg-slate-200 transition-colors border border-slate-200">Today</button>
 
                             <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white p-2 rounded-lg shadow-md active:scale-95 transition-all"><Icon name="plus" className="w-4 h-4"/></button>
                             <button onClick={() => setIsLoginOpen(true)} className={`p-2 transition-colors ${isAdmin ? 'text-indigo-600' : 'text-slate-400'}`}><Icon name="user" className="w-5 h-5"/></button>
@@ -210,7 +236,11 @@
                     {isMonthViewOpen && (
                         <div className="absolute top-16 left-0 right-0 z-[60] bg-white border-b shadow-xl p-4 animate-in slide-in-from-top duration-200">
                             <div className="flex justify-between items-center mb-4">
-                                <h3 className="font-black text-sm uppercase tracking-widest text-slate-400">{viewDate.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
+                                <div className="flex items-center space-x-3">
+                                    <button onClick={() => changeCalendarMonth(-1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronLeft" className="w-4 h-4"/></button>
+                                    <h3 className="font-black text-sm uppercase tracking-widest text-slate-800">{calendarDate.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
+                                    <button onClick={() => changeCalendarMonth(1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronRight" className="w-4 h-4"/></button>
+                                </div>
                                 <button onClick={() => setIsMonthViewOpen(false)} className="text-slate-400 p-1"><Icon name="x" className="w-4 h-4"/></button>
                             </div>
                             <div className="grid grid-cols-7 gap-1">
@@ -218,12 +248,12 @@
                                 {monthDays.map((d, i) => (
                                     <div 
                                         key={i} 
-                                        onClick={() => d && (setViewDate(d), setIsMonthViewOpen(false))}
+                                        onClick={() => d && (setViewDate(d), setCalendarDate(new Date(d)), setIsMonthViewOpen(false))}
                                         className={`h-10 flex flex-col items-center justify-center rounded-lg text-xs font-bold cursor-pointer relative ${!d ? '' : d.toDateString() === viewDate.toDateString() ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'hover:bg-slate-50 text-slate-600'}`}
                                     >
                                         {d?.getDate()}
                                         {d && bookedDates.has(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`) && (
-                                            <div className={`w-1 h-1 rounded-full absolute bottom-1.5 ${d.toDateString() === viewDate.toDateString() ? 'bg-white' : 'bg-indigo-400 animate-pulse'}`}></div>
+                                            <div className={`w-1 h-1 rounded-full absolute bottom-1.5 ${d.toDateString() === viewDate.toDateString() ? 'bg-white' : 'bg-indigo-400'}`}></div>
                                         )}
                                     </div>
                                 ))}
@@ -279,7 +309,7 @@
                     {/* Modals */}
                     {isLoginOpen && (
                         <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                            <form onSubmit={async (e) => { e.preventDefault(); try { await firebase.auth().signInWithEmailAndPassword(loginData.email, loginData.password); setIsLoginOpen(false); } catch(err){alert("Login Failed");} }} className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
+                            <form onSubmit={async (e) => { e.preventDefault(); try { await firebase.auth().signInWithEmailAndPassword(loginData.email, loginData.password); setIsLoginOpen(false); } catch(err){alert("Login Failed");} }} className="bg-white w-full max-sm rounded-3xl p-6 shadow-2xl">
                                 <h2 className="text-xl font-bold mb-4">Admin Login</h2>
                                 <input required type="email" placeholder="Email" className="w-full border p-3 rounded-xl mb-3" onChange={e => setLoginData({...loginData, email: e.target.value})} />
                                 <input required type="password" placeholder="Password" className="w-full border p-3 rounded-xl mb-4" onChange={e => setLoginData({...loginData, password: e.target.value})} />
@@ -295,20 +325,36 @@
                         <div className="fixed inset-0 z-[100] bg-white sm:bg-slate-900/60 sm:backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 overflow-y-auto">
                             <form onSubmit={async (e) => { e.preventDefault(); if(submitting||conflict) return; setSubmitting(true); const start = new Date(`${formData.startDate}T${formData.startTime}`).getTime(); const end = start + (parseInt(formData.durationHours||0)*3600000) + (parseInt(formData.durationMinutes||0)*60000); await firebase.firestore().collection('artifacts').doc(appId).collection('public').doc('data').collection('bookings').add({ machineId: selectedMachine.id, machineName: selectedMachine.name, userName: formData.userName, projectName: formData.projectName, startTime: start, endTime: end, userId: user.uid, createdAt: firebase.firestore.FieldValue.serverTimestamp() }); setIsModalOpen(false); setSubmitting(false); }} className="bg-white w-full h-full sm:h-auto sm:max-w-md sm:rounded-3xl p-6 flex flex-col shadow-2xl">
                                 <div className="flex justify-between items-center mb-4"><h2 className="text-xl font-bold">New Booking</h2><button type="button" onClick={() => setIsModalOpen(false)} className="p-2 text-slate-400 bg-slate-100 rounded-full"><Icon name="x" className="w-5 h-5"/></button></div>
-                                {conflict && <div className="mb-4 p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-2"><div className="bg-rose-500 p-1 rounded-full"><Icon name="alert" className="text-white w-3 h-3"/></div><div className="text-[10px] text-rose-800 font-bold uppercase tracking-tight">Conflict: {conflict.userName} has this booked!</div></div>}
+                                
+                                <div className="space-y-3 mb-4">
+                                    {conflict && (
+                                        <div className="p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-2">
+                                            <div className="bg-rose-500 p-1 rounded-full"><Icon name="alert" className="text-white w-3 h-3"/></div>
+                                            <div className="text-[10px] text-rose-800 font-bold uppercase tracking-tight">Conflict: {conflict.userName} has this booked!</div>
+                                        </div>
+                                    )}
+
+                                    {safetyWarning && (
+                                        <div className={`p-3 border rounded-xl flex items-center gap-3 ${safetyWarning.type === 'hard' ? 'bg-red-50 border-red-100 text-red-800' : safetyWarning.type === 'weekend' ? 'bg-indigo-50 border-indigo-100 text-indigo-800' : 'bg-amber-50 border-amber-100 text-amber-800'}`}>
+                                            <div className={`${safetyWarning.type === 'hard' ? 'bg-red-500' : safetyWarning.type === 'weekend' ? 'bg-indigo-500' : 'bg-amber-500'} p-1.5 rounded-full`}><Icon name="alert" className="text-white w-3.5 h-3.5"/></div>
+                                            <div className="text-[10px] font-black uppercase tracking-tight leading-tight">{safetyWarning.msg}</div>
+                                        </div>
+                                    )}
+                                </div>
+
                                 <div className="space-y-4 flex-1">
-                                    <label className="block"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Machine</span><select value={selectedMachine.id} onChange={e => setSelectedMachine(MACHINES.find(m => m.id === e.target.value))} className="w-full border-slate-200 border p-3 rounded-xl font-bold bg-slate-50 text-sm">{MACHINES.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
+                                    <label className="block"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Machine</span><select value={selectedMachine.id} onChange={e => setSelectedMachine(MACHINES.find(m => m.id === e.target.value))} className="w-full border-slate-200 border p-3 rounded-xl font-bold bg-slate-50 text-sm outline-none">{MACHINES.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
                                     <div className="grid grid-cols-2 gap-3">
-                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Your Name</span><input required className="w-full border p-3 rounded-xl text-sm font-bold bg-slate-50" onChange={e => setFormData({...formData, userName: e.target.value})}/></label>
-                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Project</span><input required className="w-full border p-3 rounded-xl text-sm font-bold bg-slate-50" onChange={e => setFormData({...formData, projectName: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Your Name</span><input required className="w-full border p-3 rounded-xl text-sm font-bold bg-slate-50 outline-none" onChange={e => setFormData({...formData, userName: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Project</span><input required className="w-full border p-3 rounded-xl text-sm font-bold bg-slate-50 outline-none" onChange={e => setFormData({...formData, projectName: e.target.value})}/></label>
                                     </div>
                                     <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 grid grid-cols-2 gap-3 shadow-inner">
-                                        <label><span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest ml-1 block mb-1">Date</span><input type="date" value={formData.startDate} className="w-full border p-2 rounded-xl text-xs font-bold" onChange={e => setFormData({...formData, startDate: e.target.value})}/></label>
-                                        <label><span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest ml-1 block mb-1">Start Time</span><input type="time" value={formData.startTime} className="w-full border p-2 rounded-xl text-xs font-bold" onChange={e => setFormData({...formData, startTime: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest ml-1 block mb-1">Date</span><input type="date" value={formData.startDate} className="w-full border p-2 rounded-xl text-xs font-bold outline-none" onChange={e => setFormData({...formData, startDate: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest ml-1 block mb-1">Start Time</span><input type="time" value={formData.startTime} className="w-full border p-2 rounded-xl text-xs font-bold outline-none" onChange={e => setFormData({...formData, startTime: e.target.value})}/></label>
                                     </div>
                                     <div className="grid grid-cols-2 gap-3">
-                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Hours</span><input type="number" min="0" value={formData.durationHours} className="w-full border p-3 rounded-xl font-bold text-sm bg-slate-50" onChange={e => setFormData({...formData, durationHours: e.target.value})}/></label>
-                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Minutes</span><input type="number" min="0" max="59" value={formData.durationMinutes} className="w-full border p-3 rounded-xl font-bold text-sm bg-slate-50" onChange={e => setFormData({...formData, durationMinutes: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Hours</span><input type="number" min="0" value={formData.durationHours} className="w-full border p-3 rounded-xl font-bold text-sm bg-slate-50 outline-none" onChange={e => setFormData({...formData, durationHours: e.target.value})}/></label>
+                                        <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Minutes</span><input type="number" min="0" max="59" value={formData.durationMinutes} className="w-full border p-3 rounded-xl font-bold text-sm bg-slate-50 outline-none" onChange={e => setFormData({...formData, durationMinutes: e.target.value})}/></label>
                                     </div>
                                 </div>
                                 <button type="submit" disabled={submitting || !!conflict} className={`w-full p-4 rounded-2xl font-bold shadow-lg mt-6 text-white transition-all ${conflict ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}>{submitting ? 'Saving...' : conflict ? 'Unavailable' : 'Confirm Schedule'}</button>
