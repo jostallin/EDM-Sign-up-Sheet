@@ -32,7 +32,7 @@
                 layers: <React.Fragment><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></React.Fragment>,
                 user: <React.Fragment><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></React.Fragment>,
                 alert: <React.Fragment><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></React.Fragment>,
-                info: <React.Fragment><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></React.Fragment>
+                clock: <React.Fragment><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></React.Fragment>
             };
             return (
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -111,23 +111,19 @@
                 }, () => setLoading(false));
             }, [user]);
 
-            // Safety Warning Logic
             const safetyWarning = useMemo(() => {
                 const date = new Date(formData.startDate + 'T' + formData.startTime);
                 const hour = date.getHours();
                 const day = date.getDay(); // 0 Sun, 6 Sat
 
-                // Hard Safety Warning (Before 8am or After 4pm)
                 if (hour < 8 || hour >= 16) {
                     return { type: 'hard', msg: 'NO INSTRUCTORS PRESENT. Approval Required for safety reasons.' };
                 }
-                // Weekend Warning
                 if (day === 0 || day === 6) {
                     return { type: 'weekend', msg: 'Weekend usage is rare. Please confirm with instructor.' };
                 }
-                // Soft Warning (M-Th before noon)
                 if (day >= 1 && day <= 4 && hour < 12) {
-                    return { type: 'soft', msg: 'Soft Warning: Instructor may be unavailable for help until Noon.' };
+                    return { type: 'soft', msg: 'Instructor may be unavailable for help until Noon.' };
                 }
                 return null;
             }, [formData.startDate, formData.startTime]);
@@ -140,6 +136,12 @@
                 setConflict(found || null);
             }, [formData, selectedMachine, bookings, isModalOpen]);
 
+            const bookedDates = useMemo(() => {
+                const dates = new Set();
+                bookings.forEach(b => dates.add(new Date(b.startTime).toDateString()));
+                return dates;
+            }, [bookings]);
+
             const deleteBooking = async (id) => {
                 if(!confirm("Delete this booking?")) return;
                 try {
@@ -147,31 +149,18 @@
                 } catch (err) { alert("Permission denied."); }
             };
 
-            const bookedDates = useMemo(() => {
-                const dates = new Set();
-                bookings.forEach(b => {
-                    const d = new Date(b.startTime);
-                    dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-                });
-                return dates;
-            }, [bookings]);
-
             const changeDay = (off) => { 
                 let n = new Date(viewDate);
                 n.setDate(n.getDate() + off);
-
-                // Soft Hide Weekends Logic
-                // If it's a weekend and there are no bookings, skip it
-                const isWeekend = (d) => d.getDay() === 0 || d.getDay() === 6;
-                const hasBooking = (d) => bookedDates.has(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-
-                // Skip ahead/back until we find a weekday or a booked weekend
-                let safetyCounter = 0;
-                while (isWeekend(n) && !hasBooking(n) && safetyCounter < 7) {
-                    n.setDate(n.getDate() + (off > 0 ? 1 : -1));
-                    safetyCounter++;
-                }
                 
+                const isWeekend = (d) => d.getDay() === 0 || d.getDay() === 6;
+                const hasBooking = (d) => bookedDates.has(d.toDateString());
+                
+                let safety = 0;
+                while (isWeekend(n) && !hasBooking(n) && safety < 7) {
+                    n.setDate(n.getDate() + (off > 0 ? 1 : -1));
+                    safety++;
+                }
                 setViewDate(n); 
                 setCalendarDate(new Date(n));
             };
@@ -193,13 +182,7 @@
                 return days;
             }, [calendarDate]);
 
-            const changeCalendarMonth = (off) => {
-                const n = new Date(calendarDate);
-                n.setMonth(n.getMonth() + off);
-                setCalendarDate(n);
-            };
-
-            if (loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 italic">Loading Shop...</div>;
+            if (loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-400 italic">Connecting to Shop...</div>;
 
             return (
                 <div className="flex flex-col h-screen max-h-screen overflow-hidden">
@@ -207,8 +190,8 @@
                         <div className="flex items-center space-x-2">
                             <div className="bg-indigo-600 p-1.5 rounded-lg shadow-sm"><Icon name="layers" className="text-white w-4 h-4"/></div>
                             <div className="hidden sm:block">
-                                <h1 className="text-sm font-bold text-slate-800">Shop Scheduler</h1>
-                                {isAdmin && <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Admin</span>}
+                                <h1 className="text-sm font-bold text-slate-800 leading-none mb-1">Shop Scheduler</h1>
+                                {isAdmin && <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Admin Mode</span>}
                             </div>
                         </div>
                         
@@ -217,29 +200,28 @@
                                 <Icon name="calendar" className="w-4 h-4"/>
                             </button>
                             
-                            <div className="flex items-center bg-slate-50 border rounded-lg overflow-hidden shadow-sm">
-                                <button onClick={() => changeDay(-1)} className="p-2 hover:bg-white transition-colors border-r"><Icon name="chevronLeft" className="w-4 h-4 text-slate-400"/></button>
-                                <div className="px-3 text-xs font-bold text-slate-700 min-w-[90px] text-center">
+                            <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
+                                <button onClick={() => changeDay(-1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-md transition-all"><Icon name="chevronLeft" className="w-3.5 h-3.5"/></button>
+                                <div className="px-3 text-xs font-bold text-slate-700 min-w-[80px] text-center">
                                     {viewDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}
                                 </div>
-                                <button onClick={() => changeDay(1)} className="p-2 hover:bg-white transition-colors border-l"><Icon name="chevronRight" className="w-4 h-4 text-slate-400"/></button>
+                                <button onClick={() => changeDay(1)} className="p-1.5 hover:bg-white hover:shadow-sm rounded-md transition-all"><Icon name="chevronRight" className="w-3.5 h-3.5"/></button>
                             </div>
 
-                            <button onClick={goToToday} className="px-3 py-2 bg-slate-100 rounded-lg text-[10px] font-black uppercase tracking-tight hover:bg-slate-200 transition-colors border border-slate-200">Today</button>
+                            <button onClick={goToToday} className="hidden sm:block px-3 py-2 bg-white rounded-lg text-[10px] font-black uppercase tracking-tight border border-slate-200 hover:bg-slate-50 transition-colors">Today</button>
 
-                            <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white p-2 rounded-lg shadow-md active:scale-95 transition-all"><Icon name="plus" className="w-4 h-4"/></button>
+                            <button onClick={() => setIsModalOpen(true)} className="bg-indigo-600 text-white p-2 rounded-lg shadow-md active:scale-95"><Icon name="plus" className="w-4 h-4"/></button>
                             <button onClick={() => setIsLoginOpen(true)} className={`p-2 transition-colors ${isAdmin ? 'text-indigo-600' : 'text-slate-400'}`}><Icon name="user" className="w-5 h-5"/></button>
                         </div>
                     </header>
 
-                    {/* Month Quick-View Overlay */}
                     {isMonthViewOpen && (
                         <div className="absolute top-16 left-0 right-0 z-[60] bg-white border-b shadow-xl p-4 animate-in slide-in-from-top duration-200">
                             <div className="flex justify-between items-center mb-4">
                                 <div className="flex items-center space-x-3">
-                                    <button onClick={() => changeCalendarMonth(-1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronLeft" className="w-4 h-4"/></button>
+                                    <button onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth()-1, 1))} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronLeft" className="w-4 h-4"/></button>
                                     <h3 className="font-black text-sm uppercase tracking-widest text-slate-800">{calendarDate.toLocaleDateString([], { month: 'long', year: 'numeric' })}</h3>
-                                    <button onClick={() => changeCalendarMonth(1)} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronRight" className="w-4 h-4"/></button>
+                                    <button onClick={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth()+1, 1))} className="p-1 hover:bg-slate-100 rounded"><Icon name="chevronRight" className="w-4 h-4"/></button>
                                 </div>
                                 <button onClick={() => setIsMonthViewOpen(false)} className="text-slate-400 p-1"><Icon name="x" className="w-4 h-4"/></button>
                             </div>
@@ -248,11 +230,11 @@
                                 {monthDays.map((d, i) => (
                                     <div 
                                         key={i} 
-                                        onClick={() => d && (setViewDate(d), setCalendarDate(new Date(d)), setIsMonthViewOpen(false))}
+                                        onClick={() => d && (setViewDate(d), setIsMonthViewOpen(false))}
                                         className={`h-10 flex flex-col items-center justify-center rounded-lg text-xs font-bold cursor-pointer relative ${!d ? '' : d.toDateString() === viewDate.toDateString() ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'hover:bg-slate-50 text-slate-600'}`}
                                     >
                                         {d?.getDate()}
-                                        {d && bookedDates.has(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`) && (
+                                        {d && bookedDates.has(d.toDateString()) && (
                                             <div className={`w-1 h-1 rounded-full absolute bottom-1.5 ${d.toDateString() === viewDate.toDateString() ? 'bg-white' : 'bg-indigo-400'}`}></div>
                                         )}
                                     </div>
@@ -278,7 +260,7 @@
                                 <div key={m.id} className="flex border-b border-slate-200 bg-white">
                                     <div className="w-24 sm:w-32 shrink-0 p-2 sm:p-3 border-r bg-white sticky left-0 z-20 shadow-[2px_0_5px_rgba(0,0,0,0.03)]">
                                         <div className="font-bold text-[11px] sm:text-xs text-slate-700 truncate leading-tight">{m.name}</div>
-                                        <div className="text-[8px] text-indigo-500 font-bold uppercase opacity-70 tracking-tighter">{m.category}</div>
+                                        <div className="text-[8px] text-indigo-500 font-bold uppercase opacity-70">{m.category}</div>
                                     </div>
                                     <div className="flex relative h-14 sm:h-16">
                                         {HOURS.map(h => <div key={h} style={{width: PIXELS_PER_HOUR+'px'}} className="border-r border-slate-100 h-full shrink-0" />)}
@@ -286,14 +268,14 @@
                                             const sView = new Date(viewDate).setHours(START_HOUR,0,0,0);
                                             const left = (Math.max(sView, b.startTime) - sView) / 3600000 * PIXELS_PER_HOUR;
                                             const width = (Math.min(sView + 36000000, b.endTime) - Math.max(sView, b.startTime)) / 3600000 * PIXELS_PER_HOUR;
-                                            const colors = ['bg-indigo-50 border-indigo-200 text-indigo-700', 'bg-emerald-50 border-emerald-200 text-emerald-700', 'bg-amber-50 border-amber-200 text-amber-700', 'bg-rose-50 border-rose-200 text-rose-700'];
-                                            const colorClass = colors[b.userName.length % colors.length];
+                                            const isOwner = user && b.userId === user.uid;
+                                            
                                             return (
                                                 <div 
                                                     key={b.id} 
                                                     style={{left: left+'px', width: (width-2)+'px'}} 
-                                                    className={`absolute top-1.5 bottom-1.5 ${colorClass} border rounded-md p-1.5 overflow-hidden shadow-sm z-10 flex flex-col justify-center transition-transform active:scale-95 cursor-pointer`}
-                                                    onClick={() => (isAdmin || (user && b.userId === user.uid)) && deleteBooking(b.id)}
+                                                    className={`absolute top-1.5 bottom-1.5 ${isOwner ? 'bg-indigo-600 text-white shadow-md' : 'bg-slate-100 text-slate-600 border border-slate-200'} rounded-md p-1.5 overflow-hidden z-10 flex flex-col justify-center transition-transform active:scale-95 cursor-pointer`}
+                                                    onClick={() => (isAdmin || isOwner) && deleteBooking(b.id)}
                                                 >
                                                     <span className="text-[9px] font-black truncate uppercase leading-none block">{b.userName}</span>
                                                     <span className="text-[8px] opacity-70 truncate font-bold">{b.projectName}</span>
@@ -305,21 +287,6 @@
                             ))}
                         </div>
                     </main>
-
-                    {/* Modals */}
-                    {isLoginOpen && (
-                        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                            <form onSubmit={async (e) => { e.preventDefault(); try { await firebase.auth().signInWithEmailAndPassword(loginData.email, loginData.password); setIsLoginOpen(false); } catch(err){alert("Login Failed");} }} className="bg-white w-full max-sm rounded-3xl p-6 shadow-2xl">
-                                <h2 className="text-xl font-bold mb-4">Admin Login</h2>
-                                <input required type="email" placeholder="Email" className="w-full border p-3 rounded-xl mb-3" onChange={e => setLoginData({...loginData, email: e.target.value})} />
-                                <input required type="password" placeholder="Password" className="w-full border p-3 rounded-xl mb-4" onChange={e => setLoginData({...loginData, password: e.target.value})} />
-                                <div className="flex gap-2">
-                                    <button type="button" onClick={() => setIsLoginOpen(false)} className="flex-1 p-3 bg-slate-100 rounded-xl font-bold">Cancel</button>
-                                    <button type="submit" className="flex-1 p-3 bg-indigo-600 text-white rounded-xl font-bold">Login</button>
-                                </div>
-                            </form>
-                        </div>
-                    )}
 
                     {isModalOpen && (
                         <div className="fixed inset-0 z-[100] bg-white sm:bg-slate-900/60 sm:backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 overflow-y-auto">
@@ -336,7 +303,7 @@
 
                                     {safetyWarning && (
                                         <div className={`p-3 border rounded-xl flex items-center gap-3 ${safetyWarning.type === 'hard' ? 'bg-red-50 border-red-100 text-red-800' : safetyWarning.type === 'weekend' ? 'bg-indigo-50 border-indigo-100 text-indigo-800' : 'bg-amber-50 border-amber-100 text-amber-800'}`}>
-                                            <div className={`${safetyWarning.type === 'hard' ? 'bg-red-500' : safetyWarning.type === 'weekend' ? 'bg-indigo-500' : 'bg-amber-500'} p-1.5 rounded-full`}><Icon name="alert" className="text-white w-3.5 h-3.5"/></div>
+                                            <div className={`${safetyWarning.type === 'hard' ? 'bg-red-500' : safetyWarning.type === 'weekend' ? 'bg-indigo-500' : 'bg-amber-500'} p-1.5 rounded-full shrink-0`}><Icon name="alert" className="text-white w-3.5 h-3.5"/></div>
                                             <div className="text-[10px] font-black uppercase tracking-tight leading-tight">{safetyWarning.msg}</div>
                                         </div>
                                     )}
@@ -357,7 +324,21 @@
                                         <label><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 block mb-1">Minutes</span><input type="number" min="0" max="59" value={formData.durationMinutes} className="w-full border p-3 rounded-xl font-bold text-sm bg-slate-50 outline-none" onChange={e => setFormData({...formData, durationMinutes: e.target.value})}/></label>
                                     </div>
                                 </div>
-                                <button type="submit" disabled={submitting || !!conflict} className={`w-full p-4 rounded-2xl font-bold shadow-lg mt-6 text-white transition-all ${conflict ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}>{submitting ? 'Saving...' : conflict ? 'Unavailable' : 'Confirm Schedule'}</button>
+                                <button type="submit" disabled={submitting || !!conflict} className={`w-full p-4 rounded-2xl font-bold shadow-lg mt-6 text-white transition-all ${conflict ? 'bg-slate-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}>{submitting ? 'Saving...' : conflict ? 'Unavailable' : 'Confirm Job'}</button>
+                            </form>
+                        </div>
+                    )}
+
+                    {isLoginOpen && (
+                        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+                            <form onSubmit={async (e) => { e.preventDefault(); try { await firebase.auth().signInWithEmailAndPassword(loginData.email, loginData.password); setIsLoginOpen(false); } catch(err){alert("Login Failed");} }} className="bg-white w-full max-w-sm rounded-[2rem] p-8 shadow-2xl">
+                                <h2 className="text-xl font-bold mb-4 text-slate-800">Admin Login</h2>
+                                <input required type="email" placeholder="Email" className="w-full border-slate-200 border p-4 rounded-2xl mb-3 outline-none bg-slate-50 font-bold" onChange={e => setLoginData({...loginData, email: e.target.value})} />
+                                <input required type="password" placeholder="Password" className="w-full border-slate-200 border p-4 rounded-2xl mb-6 outline-none bg-slate-50 font-bold" onChange={e => setLoginData({...loginData, password: e.target.value})} />
+                                <div className="flex gap-3">
+                                    <button type="button" onClick={() => setIsLoginOpen(false)} className="flex-1 p-4 bg-slate-100 rounded-2xl font-black text-xs uppercase tracking-widest">Cancel</button>
+                                    <button type="submit" className="flex-1 p-4 bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all">Login</button>
+                                </div>
                             </form>
                         </div>
                     )}
